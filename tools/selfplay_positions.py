@@ -64,9 +64,12 @@ class Engine:
         self.send("ucinewgame")
         self.ready()
 
-    def move(self, board: chess.Board, movetime: int) -> chess.Move:
+    def move(self, board: chess.Board, movetime: int | None, nodes: int | None) -> chess.Move:
         self.send("position fen " + board.fen())
-        self.send(f"go movetime {movetime}")
+        if nodes is not None:
+            self.send(f"go nodes {nodes}")
+        else:
+            self.send(f"go movetime {movetime}")
         assert self.p.stdout is not None
         best = None
         while True:
@@ -98,7 +101,9 @@ def main():
     ap.add_argument("--out", required=True)
     ap.add_argument("--positions", type=int, default=1000)
     ap.add_argument("--games", type=int, default=100)
-    ap.add_argument("--movetime", type=int, default=5)
+    budget = ap.add_mutually_exclusive_group(required=True)
+    budget.add_argument("--movetime", type=int)
+    budget.add_argument("--nodes", type=int)
     ap.add_argument("--sample-every", type=int, default=2)
     ap.add_argument("--min-ply", type=int, default=10)
     ap.add_argument("--max-plies", type=int, default=180)
@@ -137,7 +142,7 @@ def main():
                 for ply in range(board.ply() + 1, args.max_plies + 1):
                     if board.is_game_over(claim_draw=True):
                         break
-                    move = eng.move(board, args.movetime)
+                    move = eng.move(board, args.movetime, args.nodes)
                     board.push(move)
                     if ply < args.min_ply:
                         continue
