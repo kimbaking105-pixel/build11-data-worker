@@ -110,6 +110,8 @@ def main():
     rng = random.Random(args.seed)
     seen = set()
     games_done = 0
+    stm_white = 0
+    stm_black = 0
     t0 = time.time()
     eng = Engine(args.engine, args.threads, args.hash)
     try:
@@ -121,6 +123,10 @@ def main():
                 eng.new_game()
                 board = chess.Board()
                 opening = rng.choice(OPENINGS)
+                # Pick a random sampling phase for each game. With sample-every=2,
+                # this alternates the side-to-move across games instead of
+                # accidentally collecting only White-to-move positions.
+                sample_offset = rng.randrange(max(1, args.sample_every))
                 for uci in opening:
                     move = chess.Move.from_uci(uci)
                     if move not in board.legal_moves:
@@ -131,7 +137,9 @@ def main():
                         break
                     move = eng.move(board, args.movetime)
                     board.push(move)
-                    if ply < args.min_ply or (ply - args.min_ply) % args.sample_every:
+                    if ply < args.min_ply:
+                        continue
+                    if (ply - args.min_ply - sample_offset) % max(1, args.sample_every):
                         continue
                     if board.is_checkmate() or board.is_stalemate() or board.is_insufficient_material():
                         continue
@@ -140,15 +148,19 @@ def main():
                     if key in seen:
                         continue
                     seen.add(key)
+                    if parts[1] == "w":
+                        stm_white += 1
+                    else:
+                        stm_black += 1
                     fo.write(board.fen() + "\n")
                     if len(seen) >= args.positions:
                         break
                 if games_done % 10 == 0:
-                    print(f"games={games_done} unique_positions={len(seen)}", flush=True)
+                    print(f"games={games_done} unique_positions={len(seen)} stm_w={stm_white} stm_b={stm_black}", flush=True)
             fo.flush()
     finally:
         eng.close()
-    print(f"written={len(seen)} games={games_done} elapsed_sec={time.time()-t0:.1f}")
+    print(f"written={len(seen)} games={games_done} stm_w={stm_white} stm_b={stm_black} elapsed_sec={time.time()-t0:.1f}")
 
 
 if __name__ == "__main__":
