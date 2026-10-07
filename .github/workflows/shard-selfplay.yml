@@ -51,6 +51,7 @@ jobs:
             --games "${{ inputs.games }}" \
             --nodes "${{ inputs.nodes }}" \
             --sample-every 2 \
+            --opening-random-plies 6 \
             --min-ply 10 \
             --max-plies 180 \
             --threads 1 \
