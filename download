@@ -1,0 +1,7 @@
+engine_build11
+positions*.fen
+*.labels
+*.tsv
+*.bin
+*.pgn
+__pycache__/
