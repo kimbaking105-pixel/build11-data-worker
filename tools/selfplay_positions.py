@@ -112,6 +112,8 @@ def main():
     games_done = 0
     stm_white = 0
     stm_black = 0
+    target_white = args.positions // 2
+    target_black = args.positions - target_white
     t0 = time.time()
     eng = Engine(args.engine, args.threads, args.hash)
     try:
@@ -147,13 +149,21 @@ def main():
                     key = " ".join(parts[:4])
                     if key in seen:
                         continue
+                    # Keep the smoke/test shard exactly balanced by side to move.
+                    # Once one quota is full, only accept the other side.
+                    if parts[1] == "w":
+                        if stm_white >= target_white:
+                            continue
+                    else:
+                        if stm_black >= target_black:
+                            continue
                     seen.add(key)
                     if parts[1] == "w":
                         stm_white += 1
                     else:
                         stm_black += 1
                     fo.write(board.fen() + "\n")
-                    if len(seen) >= args.positions:
+                    if stm_white >= target_white and stm_black >= target_black:
                         break
                 if games_done % 10 == 0:
                     print(f"games={games_done} unique_positions={len(seen)} stm_w={stm_white} stm_b={stm_black}", flush=True)
