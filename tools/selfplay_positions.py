@@ -30,6 +30,46 @@ OPENINGS = [
 ]
 
 
+def build_start_position(rng: random.Random, extra_plies: int) -> chess.Board:
+    """Create a varied but restrained opening position.
+
+    The engine is deterministic at a fixed node count. Reusing only a dozen
+    four-ply seeds therefore reproduces the same games. We keep the curated
+    seed, then add a few quiet opening moves chosen from a small top pool. The
+    subsequent moves are all made by build1.1 at the requested node budget.
+    """
+    board = chess.Board()
+    for uci in rng.choice(OPENINGS):
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            raise RuntimeError(f"bad opening move {uci}")
+        board.push(move)
+
+    central = {
+        chess.D4, chess.E4, chess.D5, chess.E5,
+        chess.C4, chess.F4, chess.C5, chess.F5,
+    }
+    for _ in range(max(0, extra_plies)):
+        legal = list(board.legal_moves)
+        quiet = [m for m in legal if not board.is_capture(m) and not board.gives_check(m)]
+        candidates = quiet or legal
+
+        def score(move: chess.Move) -> float:
+            value = rng.random() * 3.0
+            piece = board.piece_at(move.from_square)
+            if move.to_square in central:
+                value += 4.0
+            if piece and piece.piece_type in (chess.KNIGHT, chess.BISHOP):
+                value += 2.0
+            if board.is_castling(move):
+                value += 3.0
+            return value
+
+        ranked = sorted(candidates, key=score, reverse=True)
+        board.push(rng.choice(ranked[:min(8, len(ranked))]))
+    return board
+
+
 class Engine:
     def __init__(self, path: str, threads: int, hash_mb: int):
         self.p = subprocess.Popen(
@@ -107,6 +147,7 @@ def main():
     ap.add_argument("--sample-every", type=int, default=2)
     ap.add_argument("--min-ply", type=int, default=10)
     ap.add_argument("--max-plies", type=int, default=180)
+    ap.add_argument("--opening-random-plies", type=int, default=6)
     ap.add_argument("--threads", type=int, default=1)
     ap.add_argument("--hash", type=int, default=32)
     ap.add_argument("--seed", type=int, default=20261007)
@@ -128,17 +169,11 @@ def main():
                     break
                 games_done += 1
                 eng.new_game()
-                board = chess.Board()
-                opening = rng.choice(OPENINGS)
+                board = build_start_position(rng, args.opening_random_plies)
                 # Pick a random sampling phase for each game. With sample-every=2,
                 # this alternates the side-to-move across games instead of
                 # accidentally collecting only White-to-move positions.
                 sample_offset = rng.randrange(max(1, args.sample_every))
-                for uci in opening:
-                    move = chess.Move.from_uci(uci)
-                    if move not in board.legal_moves:
-                        raise RuntimeError(f"bad opening move {uci}")
-                    board.push(move)
                 for ply in range(board.ply() + 1, args.max_plies + 1):
                     if board.is_game_over(claim_draw=True):
                         break
