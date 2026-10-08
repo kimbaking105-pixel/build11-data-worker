@@ -44,11 +44,22 @@ jobs:
           g++ -O2 -std=c++17 -pthread engine_build11_bitboard.cpp -o engine_build11_magic
           sha256sum engine_build11.cpp engine_build11_bitboard.cpp engine_build11_magic
 
+      - name: Generate deterministic opening pool
+        run: |
+          python tools/make_opening_pool.py \
+            --out opening_pool_smoke.txt \
+            --count 2000 \
+            --seed 0x20261008 \
+            --min-plies 8 \
+            --max-plies 12
+          sha256sum opening_pool_smoke.txt
+
       - name: Generate labeled smoke shard
         run: |
           python tools/labeled_selfplay.py \
             --engine ./engine_build11_magic \
             --out-dir out \
+            --opening-book opening_pool_smoke.txt \
             --shard-id smoke-${{ github.run_number }} \
             --positions "${{ inputs.positions }}" \
             --games "${{ inputs.games }}" \
@@ -71,5 +82,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nnue-labeled-smoke-${{ github.run_number }}
-          path: out/
+          path: |
+            out/
+            opening_pool_smoke.txt
           retention-days: 14

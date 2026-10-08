@@ -56,12 +56,23 @@ jobs:
           g++ -O2 -std=c++17 -pthread engine_build11_bitboard.cpp -o engine_build11_magic
           sha256sum engine_build11.cpp engine_build11_bitboard.cpp engine_build11_magic > out-source-sha256.txt
 
+      - name: Generate deterministic opening pool
+        run: |
+          python tools/make_opening_pool.py \
+            --out opening_pool_${{ inputs.shard_id }}.txt \
+            --count 20000 \
+            --seed "${{ inputs.seed }}" \
+            --min-plies 8 \
+            --max-plies 12
+          sha256sum opening_pool_${{ inputs.shard_id }}.txt
+
       - name: Generate labeled shard
         run: |
           mkdir -p out
           python tools/labeled_selfplay.py \
             --engine ./engine_build11_magic \
             --out-dir out \
+            --opening-book opening_pool_${{ inputs.shard_id }}.txt \
             --shard-id "${{ inputs.shard_id }}" \
             --positions "${{ inputs.positions }}" \
             --games "${{ inputs.games }}" \
@@ -88,4 +99,5 @@ jobs:
           path: |
             out/
             out-source-sha256.txt
+            opening_pool_${{ inputs.shard_id }}.txt
           retention-days: 30
