@@ -1,0 +1,91 @@
+name: nnue-labeled-shard
+
+on:
+  workflow_dispatch:
+    inputs:
+      shard_id:
+        description: "Independent shard identifier"
+        required: true
+        default: "0001"
+      positions:
+        description: "Maximum labeled positions in this shard"
+        required: true
+        default: "1000000"
+      games:
+        description: "Maximum self-play games"
+        required: true
+        default: "50000"
+      nodes:
+        description: "Fixed UCI nodes per move"
+        required: true
+        default: "4096"
+      seed:
+        description: "Base RNG seed (decimal or 0x-prefixed)"
+        required: true
+        default: "0x20261008"
+      opening_random_plies:
+        description: "Deterministic random opening plies"
+        required: true
+        default: "6"
+      sample_every:
+        description: "Record every Nth eligible position"
+        required: true
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install data tooling
+        run: python -m pip install --disable-pip-version-check python-chess
+
+      - name: Compile active portable Magic engine
+        run: |
+          g++ -O2 -std=c++17 -pthread engine_build11_bitboard.cpp -o engine_build11_magic
+          sha256sum engine_build11.cpp engine_build11_bitboard.cpp engine_build11_magic > out-source-sha256.txt
+
+      - name: Generate labeled shard
+        run: |
+          mkdir -p out
+          python tools/labeled_selfplay.py \
+            --engine ./engine_build11_magic \
+            --out-dir out \
+            --shard-id "${{ inputs.shard_id }}" \
+            --positions "${{ inputs.positions }}" \
+            --games "${{ inputs.games }}" \
+            --nodes "${{ inputs.nodes }}" \
+            --seed "${{ inputs.seed }}" \
+            --opening-random-plies "${{ inputs.opening_random_plies }}" \
+            --sample-every "${{ inputs.sample_every }}" \
+            --min-ply 10 \
+            --max-plies 180 \
+            --threads 1 \
+            --hash 32
+
+      - name: Validate labeled shard
+        run: |
+          DATA=$(find out -name '*.jsonl.gz' -print -quit)
+          MANIFEST=$(find out -name 'manifest_*.json' -print -quit)
+          python tools/validate_labeled.py --data "$DATA" --manifest "$MANIFEST"
+          cat "$MANIFEST"
+
+      - name: Upload labeled shard artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: nnue-labeled-shard-${{ inputs.shard_id }}-${{ github.run_number }}
+          path: |
+            out/
+            out-source-sha256.txt
+          retention-days: 30
