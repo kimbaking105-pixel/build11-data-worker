@@ -36,6 +36,7 @@ def main() -> int:
     white_stm = 0
     black_stm = 0
     family_ids = set()
+    position_keys = set()
     with gzip.open(data, "rt", encoding="utf-8") as f:
         for line_no, line in enumerate(f, 1):
             record = json.loads(line)
@@ -55,6 +56,11 @@ def main() -> int:
             if not -15000 <= int(record["score_cp"]) <= 15000:
                 raise SystemExit(f"line {line_no}: score out of clamp range")
             family_ids.add(int(record["family_id"]))
+            if "position_key" in record:
+                key = str(record["position_key"])
+                if key in position_keys:
+                    raise SystemExit(f"line {line_no}: duplicate position_key {key}")
+                position_keys.add(key)
             count += 1
 
     if count != int(manifest.get("records", -1)):
@@ -68,6 +74,7 @@ def main() -> int:
         "white_stm": white_stm,
         "black_stm": black_stm,
         "family_count": len(family_ids),
+        "unique_position_keys": len(position_keys) if position_keys else None,
         "sha256": actual_sha,
     }, indent=2))
     return 0

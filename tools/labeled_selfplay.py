@@ -175,6 +175,35 @@ class Engine:
             self.proc.kill()
 
 
+def load_opening_book(path: Optional[str]) -> list[tuple[int, list[str]]]:
+    if not path:
+        return []
+    entries: list[tuple[int, list[str]]] = []
+    with open(path, "r", encoding="utf-8") as f:
+        for line_no, line in enumerate(f, 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            parts = line.split("\t")
+            if len(parts) != 3:
+                raise RuntimeError(f"opening book line {line_no}: expected id, key, moves")
+            book_id = int(parts[0])
+            entries.append((book_id, parts[2].split()))
+    if not entries:
+        raise RuntimeError(f"opening book is empty: {path}")
+    return entries
+
+
+def build_book_position(moves: list[str]) -> chess.Board:
+    board = chess.Board()
+    for uci in moves:
+        move = chess.Move.from_uci(uci)
+        if move not in board.legal_moves:
+            raise RuntimeError(f"illegal opening-book move {uci}")
+        board.push(move)
+    return board
+
+
 def game_result(board: chess.Board) -> int:
     outcome = board.outcome(claim_draw=True)
     if outcome is None or outcome.winner is None:
@@ -212,6 +241,7 @@ def main() -> int:
     ap.add_argument("--min-ply", type=int, default=10)
     ap.add_argument("--max-plies", type=int, default=180)
     ap.add_argument("--keep-mates", action="store_true")
+    ap.add_argument("--opening-book", default=None)
     args = ap.parse_args()
 
     if args.positions <= 0:
@@ -224,6 +254,7 @@ def main() -> int:
     out_path = out_dir / f"labeled_shard_{args.shard_id}.jsonl.gz"
     manifest_path = out_dir / f"manifest_{args.shard_id}.json"
     rng = random.Random(args.seed)
+    opening_book = load_opening_book(args.opening_book)
     engine = Engine(args.engine, args.threads, args.hash_mb)
     started = time.time()
     written = 0
@@ -232,6 +263,8 @@ def main() -> int:
     black_stm = 0
     mate_skipped = 0
     no_score = 0
+    duplicates_skipped = 0
+    seen_position_keys: set[str] = set()
 
     try:
         with gzip.open(out_path, "wt", encoding="utf-8", compresslevel=6) as out:
@@ -241,7 +274,13 @@ def main() -> int:
                 games_done += 1
                 engine.send("ucinewgame")
                 engine.ready()
-                board = build_start_position(rng, args.opening_random_plies)
+                if opening_book:
+                    book_id, book_moves = opening_book[(game_index + args.seed) % len(opening_book)]
+                    board = build_book_position(book_moves)
+                    family_id = int(book_id)
+                else:
+                    board = build_start_position(rng, args.opening_random_plies)
+                    family_id = int(game_index)
                 game_records: list[dict] = []
                 sample_offset = rng.randrange(args.sample_every)
 
@@ -264,7 +303,7 @@ def main() -> int:
                                 "stm": "w" if stm == chess.WHITE else "b",
                                 "ply": int(ply),
                                 "game_id": int(game_index),
-                                "family_id": int(game_index),
+                                "family_id": family_id,
                                 "seed": int(args.seed),
                             })
                     board.push(move)
@@ -273,6 +312,13 @@ def main() -> int:
                 for record in game_records:
                     if written >= args.positions:
                         break
+                    position_key = " ".join(record["fen"].split()[:4])
+                    digest = hashlib.blake2b(position_key.encode("utf-8"), digest_size=8).hexdigest()
+                    if digest in seen_position_keys:
+                        duplicates_skipped += 1
+                        continue
+                    seen_position_keys.add(digest)
+                    record["position_key"] = digest
                     record["result_stm"] = result_from_stm(result_white, record["stm"] == "w")
                     out.write(json.dumps(record, separators=(",", ":"), ensure_ascii=False) + "\n")
                     written += 1
@@ -294,6 +340,7 @@ def main() -> int:
         engine.close()
 
     elapsed = max(0.001, time.time() - started)
+    opening_book_sha = sha256_file(Path(args.opening_book)) if args.opening_book else None
     manifest = {
         "schema": "tiny-nnue-labeled-jsonl-v1",
         "shard_id": args.shard_id,
@@ -307,6 +354,9 @@ def main() -> int:
         "hash_mb": args.hash_mb,
         "seed": args.seed,
         "opening_random_plies": args.opening_random_plies,
+        "opening_book": Path(args.opening_book).name if args.opening_book else None,
+        "opening_book_entries": len(opening_book),
+        "opening_book_sha256": opening_book_sha,
         "sample_every": args.sample_every,
         "min_ply": args.min_ply,
         "max_plies": args.max_plies,
@@ -314,6 +364,8 @@ def main() -> int:
         "black_stm": black_stm,
         "mate_skipped": mate_skipped,
         "no_score": no_score,
+        "duplicates_skipped": duplicates_skipped,
+        "unique_position_keys": len(seen_position_keys),
         "elapsed_sec": round(elapsed, 3),
         "records_per_sec": round(written / elapsed, 3),
         "sha256_data": sha256_file(out_path),
