@@ -44,6 +44,26 @@ opening_random_plies: 6
 
 Первые 1000 — только проверка pipeline. Это не training candidate.
 
+## Opening pool и уникальность
+
+Для миллионных shards workflow сначала строит детерминированный opening pool из
+20 000 legal opening prefixes длиной 8–12 полуходов. Это не match book, а pool
+стартовых позиций для разнообразного self-play. Каждый shard получает другой
+seed и сохраняет свой `opening_pool_*.txt` вместе с artifact.
+
+Генератор также считает 64-bit `position_key` из первых четырёх FEN-полей
+(piece placement, side to move, castling, en-passant) и не записывает повторный
+ключ внутри shard. Между разными shards окончательную deduplication нужно
+сделать при merge; для этого `position_key` сохраняется в каждой записи.
+
+После скачивания shards их можно объединить локально:
+
+```bash
+python tools/merge_labeled.py \
+  --input labeled_shard_0001.jsonl.gz labeled_shard_0002.jsonl.gz \
+  --out corpus_v1.jsonl.gz --manifest corpus_v1_manifest.json
+```
+
 ## Миллионные shards
 
 После успешного smoke запускается `nnue-labeled-shard`.
@@ -74,6 +94,7 @@ shard 0003: seed 0x2026100A
 labeled_shard_*.jsonl.gz
 manifest_*.json
 out-source-sha256.txt
+opening_pool_*.txt
 ```
 
 ## Формат записи
