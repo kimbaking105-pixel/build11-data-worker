@@ -1,0 +1,85 @@
+name: deep-label
+
+on:
+  workflow_dispatch:
+    inputs:
+      chunks:
+        description: "Chunk indexes to run in parallel, e.g. 0,1,2,3,4,5"
+        required: true
+        default: "0"
+      positions_per_chunk:
+        description: "Positions in each chunk (keep <=175000 for the 6h limit)"
+        required: true
+        default: "175000"
+      nodes:
+        description: "Frozen-teacher search nodes per position"
+        required: true
+        default: "16384"
+      shard_artifact_id:
+        description: "Artifact id of the labeled-shard zip (run 37825884487)"
+        required: true
+        default: "11574974305"
+      workers:
+        description: "Parallel engine processes (runner has 2 cores)"
+        required: true
+        default: "2"
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    timeout-minutes: 355
+    strategy:
+      fail-fast: false
+      matrix:
+        chunk: ${{ fromJson(format('[{0}]', inputs.chunks)) }}
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify frozen teacher source hash
+        run: |
+          echo "9e7cc9eda1a6f8796f45daa6fe364aa68dfc16567f2fb97291a2851bc04aef2f  engine_build11_frozen_labeler.cpp" | sha256sum -c -
+
+      - name: Build frozen teacher
+        run: |
+          g++ -std=c++17 -O2 -pthread engine_build11_frozen_labeler.cpp -o engine_frozen
+          printf 'uci\nquit\n' | ./engine_frozen | grep -q uciok
+
+      - name: Download labeled-shard artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          curl -sL -H "Accept: application/vnd.github+json" \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/${{ github.repository }}/actions/artifacts/${{ inputs.shard_artifact_id }}/zip" \
+            -o shard_artifact.zip
+          unzip -q -o shard_artifact.zip -d shard_artifact
+          SHARD_PATH="$(find shard_artifact -name 'labeled_shard_0001.jsonl.gz' | head -n 1)"
+          if [ -z "$SHARD_PATH" ]; then
+            echo "labeled_shard_0001.jsonl.gz not found inside the artifact"; ls -R shard_artifact; exit 1
+          fi
+          echo "e1fe0da36faf5de0911b0d21ee147650e6f5f5c58db7414f52cafa32f0445982  $SHARD_PATH" | sha256sum -c -
+          echo "SHARD_PATH=$SHARD_PATH" >> "$GITHUB_ENV"
+
+      - name: Deep-label chunk ${{ matrix.chunk }} with frozen teacher
+        run: |
+          python3 tools/deep_label_positions.py \
+            --shard "$SHARD_PATH" \
+            --engine ./engine_frozen \
+            --chunk-index "${{ matrix.chunk }}" \
+            --positions-per-chunk "${{ inputs.positions_per_chunk }}" \
+            --nodes "${{ inputs.nodes }}" \
+            --workers "${{ inputs.workers }}" \
+            --out "deep_labels_chunk${{ matrix.chunk }}.jsonl.gz" \
+            --report "deep_labels_chunk${{ matrix.chunk }}_report.txt"
+
+      - name: Upload deep labels
+        uses: actions/upload-artifact@v4
+        with:
+          name: deep-labels-chunk-${{ matrix.chunk }}
+          path: |
+            deep_labels_chunk${{ matrix.chunk }}.jsonl.gz
+            deep_labels_chunk${{ matrix.chunk }}_report.txt
+          if-no-files-found: error
